@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>수시지원 관리 - 교사용</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="loginView" class="login-wrap">
+  <div class="login-card">
+    <h1>교사용 관리</h1>
+    <div class="sub">교사 비밀번호를 입력하세요</div>
+    <form id="loginForm">
+      <div><label>비밀번호</label><input type="password" id="teacherPw" required></div>
+      <div class="error" id="loginError"></div>
+      <button type="submit" class="btn-primary">로그인</button>
+    </form>
+    <div class="switch-link"><a href="index.html">학생용 페이지</a></div>
+  </div>
+</div>
+
+<div id="mainView" style="display:none;">
+  <div class="topbar">
+    <div class="title">📋 수시지원 관리<small>교사용 모아보기</small></div>
+    <div class="who">
+      <button class="btn-ghost" id="logoutBtn">로그아웃</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>👩‍🏫 학생 관리</h2>
+      </div>
+      <div class="toolbar">
+        <button class="btn-outline" id="addStudentBtn">+ 학생 추가</button>
+        <button class="btn-outline" id="bulkAddBtn">📋 여러 명 한 번에 등록</button>
+        <button class="btn-outline" id="refreshBtn">🔄 새로고침</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>📊 지원 현황 모아보기</h2>
+        <span class="hint" id="countHint"></span>
+      </div>
+      <div class="toolbar">
+        <select id="classFilter"><option value="">전체 반</option></select>
+        <input type="text" id="searchBox" placeholder="학번/이름 검색">
+        <button class="btn-outline" id="exportBtn">📊 엑셀(CSV)로 저장</button>
+      </div>
+      <div class="table-scroll">
+        <table id="dataTable">
+          <thead><tr>
+            <th>반</th><th>학번</th><th>이름</th><th>우선순위</th><th>학교명</th><th>학과</th>
+            <th>전형유형</th><th>전형명</th><th>판단</th><th>원서마감일</th>
+            <th>합격발표일</th><th>수험번호</th><th>비고</th>
+          </tr></thead>
+          <tbody id="dataTbody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="empty-state" style="display:none;">데이터가 없습니다.</div>
+    </div>
+  </div>
+</div>
+
+<div id="addModalBackdrop" class="modal-backdrop" style="display:none;">
+  <div class="modal">
+    <h3>🎓 학생 추가</h3>
+    <form id="addForm">
+      <div><label>학번</label><input type="text" id="newId" required></div>
+      <div><label>이름</label><input type="text" id="newName" required></div>
+      <div><label>반</label><input type="text" id="newCls" placeholder="예: 3반" required></div>
+      <div class="error" id="addError"></div>
+      <div class="hint" style="font-size:12px;color:var(--text-sub);">초기 비밀번호는 학번과 동일하게 설정됩니다.</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-outline" id="addCancelBtn">취소</button>
+        <button type="submit" class="btn-primary">추가</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="bulkModalBackdrop" class="modal-backdrop" style="display:none;">
+  <div class="modal" style="max-width:520px;">
+    <h3>📋 여러 명 한 번에 등록</h3>
+    <div class="hint" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">
+      한 줄에 한 명씩, <b>학번,이름,반</b> 순서로 콤마(,)로 구분해서 붙여넣으세요.<br>
+      구글시트에서 세 열을 선택해 복사한 뒤 그대로 붙여넣어도 동작합니다.
+    </div>
+    <textarea id="bulkText" rows="10" placeholder="30101,홍길동,3반&#10;30102,김철수,3반&#10;30103,이영희,3반"></textarea>
+    <div class="error" id="bulkError"></div>
+    <div id="bulkResult" style="font-size:13px;margin-top:6px;"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-outline" id="bulkCancelBtn">닫기</button>
+      <button type="button" class="btn-primary" id="bulkSubmitBtn">일괄 등록</button>
+    </div>
+  </div>
+</div>
+
+<div id="toastWrap"></div>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+let teacherPw = null;
+let allRows = [];
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.getElementById('toastWrap').appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+function showMain() { document.getElementById('loginView').style.display = 'none'; document.getElementById('mainView').style.display = 'block'; }
+function showLogin() { document.getElementById('mainView').style.display = 'none'; document.getElementById('loginView').style.display = 'flex'; }
+
+async function loadData() {
+  const res = await apiGet({ action: 'all' });
+  if (!res.ok) { toast('데이터 로드 실패: ' + res.error); return; }
+  allRows = res.rows;
+  populateClassFilter();
+  renderTable();
+}
+
+function populateClassFilter() {
+  const sel = document.getElementById('classFilter');
+  const current = sel.value;
+  const classes = [...new Set(allRows.map(r => r['반']).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">전체 반</option>' + classes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.value = current;
+}
+
+function renderTable() {
+  const cls = document.getElementById('classFilter').value;
+  const q = document.getElementById('searchBox').value.trim().toLowerCase();
+  let rows = allRows.filter(r => Number(r['순번']) > 0); // 실제 지원 항목만
+  if (cls) rows = rows.filter(r => r['반'] === cls);
+  if (q) rows = rows.filter(r => String(r['학번']).toLowerCase().includes(q) || String(r['이름']).toLowerCase().includes(q));
+  rows.sort((a,b) => (String(a['반']).localeCompare(String(b['반']))) || (String(a['학번']).localeCompare(String(b['학번']))) || (Number(a['순번'])-Number(b['순번'])));
+
+  const tbody = document.getElementById('dataTbody');
+  document.getElementById('emptyState').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('countHint').textContent = `${rows.length}건`;
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${escapeHtml(r['반'])}</td>
+      <td>${escapeHtml(r['학번'])}</td>
+      <td>${escapeHtml(r['이름'])}</td>
+      <td>${escapeHtml(r['우선순위'])}</td>
+      <td>${escapeHtml(r['학교명'])}</td>
+      <td>${escapeHtml(r['학과'])}</td>
+      <td>${escapeHtml(r['전형유형'])}</td>
+      <td>${escapeHtml(r['전형명'])}</td>
+      <td>${r['판단'] ? `<span class="badge ${judgeClass(r['판단'])}">${escapeHtml(r['판단'])}</span>` : ''}</td>
+      <td>${escapeHtml(r['원서마감일'])}</td>
+      <td>${escapeHtml(r['합격발표일'])}</td>
+      <td>${escapeHtml(r['수험번호'])}</td>
+      <td>
+        <button class="btn-outline" style="padding:4px 8px;font-size:12px;" data-reset="${r['학번']}">비번초기화</button>
+        <button class="btn-danger" style="padding:4px 8px;font-size:12px;" data-del="${r['학번']}">학생삭제</button>
+      </td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('[data-reset]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm(`학번 ${el.dataset.reset} 학생의 비밀번호를 학번으로 초기화할까요?`)) return;
+    const res = await apiPost({ action: 'resetPassword', teacherPassword: teacherPw, id: el.dataset.reset });
+    toast(res.ok ? '✓ 비밀번호가 초기화되었습니다' : (res.error || '실패'));
+  }));
+  tbody.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm(`학번 ${el.dataset.del} 학생 데이터를 완전히 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    const res = await apiPost({ action: 'deleteStudent', teacherPassword: teacherPw, id: el.dataset.del });
+    if (res.ok) { toast('✓ 삭제되었습니다'); loadData(); }
+    else toast(res.error || '실패');
+  }));
+}
+
+document.getElementById('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const pw = document.getElementById('teacherPw').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    const res = await apiPost({ action: 'teacherLogin', password: pw });
+    if (!res.ok) { errEl.textContent = res.error || '로그인 실패'; return; }
+    teacherPw = pw;
+    sessionStorage.setItem('susi_teacher_pw', pw);
+    showMain();
+    loadData();
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  teacherPw = null;
+  sessionStorage.removeItem('susi_teacher_pw');
+  showLogin();
+});
+
+document.getElementById('classFilter').addEventListener('change', renderTable);
+document.getElementById('searchBox').addEventListener('input', renderTable);
+document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const cls = document.getElementById('classFilter').value;
+  let rows = allRows.filter(r => Number(r['순번']) > 0);
+  if (cls) rows = rows.filter(r => r['반'] === cls);
+  const columns = ['반','학번','이름','우선순위','학교명','학과','전형유형','전형명','모집인원','수능최저','면접','내신점수','전년도평균','원서마감일','합격발표일','수험번호','판단','기타의견','추천전형'];
+  downloadCSV(`수시지원현황_${cls || '전체'}.csv`, rows, columns);
+});
+
+document.getElementById('addStudentBtn').addEventListener('click', () => {
+  document.getElementById('addForm').reset();
+  document.getElementById('addError').textContent = '';
+  document.getElementById('addModalBackdrop').style.display = 'flex';
+});
+document.getElementById('addCancelBtn').addEventListener('click', () => {
+  document.getElementById('addModalBackdrop').style.display = 'none';
+});
+document.getElementById('addForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = document.getElementById('newId').value.trim();
+  const name = document.getElementById('newName').value.trim();
+  const cls = document.getElementById('newCls').value.trim();
+  const errEl = document.getElementById('addError');
+  try {
+    const res = await apiPost({ action: 'addStudent', teacherPassword: teacherPw, id, name, cls });
+    if (!res.ok) { errEl.textContent = res.error || '추가 실패'; return; }
+    document.getElementById('addModalBackdrop').style.display = 'none';
+    toast('✓ 학생이 추가되었습니다');
+    loadData();
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+
+document.getElementById('bulkAddBtn').addEventListener('click', () => {
+  document.getElementById('bulkText').value = '';
+  document.getElementById('bulkError').textContent = '';
+  document.getElementById('bulkResult').textContent = '';
+  document.getElementById('bulkModalBackdrop').style.display = 'flex';
+});
+document.getElementById('bulkCancelBtn').addEventListener('click', () => {
+  document.getElementById('bulkModalBackdrop').style.display = 'none';
+});
+document.getElementById('bulkSubmitBtn').addEventListener('click', async () => {
+  const raw = document.getElementById('bulkText').value;
+  const errEl = document.getElementById('bulkError');
+  const resultEl = document.getElementById('bulkResult');
+  errEl.textContent = ''; resultEl.textContent = '';
+
+  // 구글시트에서 복사하면 탭(\t)으로, 직접 입력하면 콤마(,)로 구분되므로 둘 다 지원
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) { errEl.textContent = '내용을 입력해주세요.'; return; }
+
+  const students = lines.map(line => {
+    const parts = line.split(/\t|,/).map(p => p.trim());
+    return { id: parts[0] || '', name: parts[1] || '', cls: parts[2] || '' };
+  });
+
+  try {
+    const res = await apiPost({ action: 'bulkAddStudents', teacherPassword: teacherPw, students });
+    if (!res.ok) { errEl.textContent = res.error || '등록 실패'; return; }
+    let msg = `✓ ${res.addedCount}명 등록되었습니다.`;
+    if (res.skipped && res.skipped.length > 0) {
+      msg += `<br>건너뜀 ${res.skipped.length}건: ` + res.skipped.map(s => `${escapeHtml(s.id)}(${escapeHtml(s.reason)})`).join(', ');
+    }
+    resultEl.innerHTML = msg;
+    toast(`✓ ${res.addedCount}명 등록 완료`);
+    loadData();
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+
+(function init() {
+  const saved = sessionStorage.getItem('susi_teacher_pw');
+  if (saved) {
+    teacherPw = saved;
+    showMain();
+    loadData();
+  }
+})();
+</script>
+</body>
+</html>

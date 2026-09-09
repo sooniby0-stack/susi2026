@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>수시지원 관리</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="loginView" class="login-wrap">
+  <div class="login-card">
+    <h1>수시지원 관리</h1>
+    <div class="sub">학번과 비밀번호로 로그인하세요</div>
+    <form id="loginForm">
+      <div>
+        <label>학번</label>
+        <input type="text" id="loginId" inputmode="numeric" required>
+      </div>
+      <div>
+        <label>비밀번호</label>
+        <input type="password" id="loginPw" required>
+      </div>
+      <div class="error" id="loginError"></div>
+      <button type="submit" class="btn-primary">로그인</button>
+    </form>
+    <div class="switch-link">초기 비밀번호는 학번과 같습니다 · <a href="admin.html">교사용 페이지</a></div>
+  </div>
+</div>
+
+<div id="mainView" style="display:none;">
+  <div class="topbar">
+    <div class="title">📋 수시지원 관리<small id="whoLine"></small></div>
+    <div class="who">
+      <button class="btn-ghost" id="pwBtn">비밀번호 변경</button>
+      <button class="btn-ghost" id="logoutBtn">로그아웃</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>🏫 지원 학교 입력</h2>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="hint">입력 후 반드시 [저장하기]를 눌러야 반영됩니다</span>
+          <button class="btn-outline" id="viewToggleBtn" style="padding:5px 10px; font-size:12px;">↕ 한 줄로 보기</button>
+        </div>
+      </div>
+      <div id="cardsWrap"></div>
+      <div style="display:flex; gap:10px; margin-top:6px;">
+        <button class="btn-outline" id="addCardBtn">+ 학교 추가</button>
+        <button class="btn-primary" id="saveBtn">저장하기</button>
+      </div>
+      <div class="error" id="saveError"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pwModalBackdrop" class="modal-backdrop" style="display:none;">
+  <div class="modal">
+    <h3>🔑 비밀번호 변경</h3>
+    <form id="pwForm">
+      <div><label>현재 비밀번호</label><input type="password" id="oldPw" required></div>
+      <div><label>새 비밀번호</label><input type="password" id="newPw1" required></div>
+      <div><label>새 비밀번호 확인</label><input type="password" id="newPw2" required></div>
+      <div class="error" id="pwError"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-outline" id="pwCancelBtn">취소</button>
+        <button type="submit" class="btn-primary">변경하기</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toastWrap"></div>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+let session = null; // { id, pw, name, cls }
+let applications = [];
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.getElementById('toastWrap').appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+function showMain() {
+  document.getElementById('loginView').style.display = 'none';
+  document.getElementById('mainView').style.display = 'block';
+  document.getElementById('whoLine').textContent = `${session.cls} · ${session.name} (${session.id})`;
+  const wrap = document.getElementById('cardsWrap');
+  const wantLine = sessionStorage.getItem('susi_view_line') === '1';
+  wrap.classList.toggle('view-line', wantLine);
+  document.getElementById('viewToggleBtn').textContent = wantLine ? '☰ 여러 줄로 보기' : '↕ 한 줄로 보기';
+  renderCards();
+}
+
+function showLogin() {
+  document.getElementById('mainView').style.display = 'none';
+  document.getElementById('loginView').style.display = 'flex';
+}
+
+function blankApp() {
+  const obj = {};
+  FIELD_LABELS.forEach(([k]) => obj[k] = '');
+  return obj;
+}
+
+function renderCards() {
+  const wrap = document.getElementById('cardsWrap');
+  if (applications.length === 0) {
+    wrap.innerHTML = '<div class="empty-state">아직 입력한 지원 학교가 없습니다. [+ 학교 추가]를 눌러 시작하세요.</div>';
+    return;
+  }
+  wrap.innerHTML = applications.map((app, i) => {
+    const jc = judgeClass(app['판단']);
+    const fields = FIELD_LABELS.map(([key, type, options]) => {
+      const val = app[key] ?? '';
+      if (type === 'select') {
+        const opts = ['<option value="">-</option>'].concat(
+          (options || []).map(o => `<option value="${o}" ${val===o?'selected':''}>${o}</option>`)
+        ).join('');
+        return `<div><label>${key}</label><select data-idx="${i}" data-key="${key}">${opts}</select></div>`;
+      }
+      if (type === 'checkbox') {
+        return `<div class="checkbox-row" style="margin-top:18px;"><input type="checkbox" data-idx="${i}" data-key="${key}" ${val?'checked':''}><label style="margin:0;">${key}</label></div>`;
+      }
+      const wide = ['학교명','학과','기타의견'].includes(key) ? 'field-wide' : '';
+      return `<div class="${wide}"><label>${key}</label><input type="${type}" data-idx="${i}" data-key="${key}" value="${escapeHtml(val)}"></div>`;
+    }).join('');
+    const cardLabel = app['우선순위'] || `지원 ${i+1}`;
+    return `<div class="app-card ${jc}">
+      <div class="card-topline">
+        <span class="card-num">${escapeHtml(cardLabel)}</span>
+        <button class="remove-btn" data-remove="${i}">✕ 삭제</button>
+      </div>
+      ${fields}
+    </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('input,select').forEach(el => {
+    el.addEventListener('input', e => {
+      const idx = +e.target.dataset.idx, key = e.target.dataset.key;
+      const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      applications[idx][key] = val;
+      if (key === '판단' || key === '우선순위') renderCards();
+    });
+  });
+  wrap.querySelectorAll('[data-remove]').forEach(el => {
+    el.addEventListener('click', () => {
+      applications.splice(+el.dataset.remove, 1);
+      renderCards();
+    });
+  });
+}
+
+document.getElementById('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = document.getElementById('loginId').value.trim();
+  const pw = document.getElementById('loginPw').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    const res = await apiPost({ action: 'login', id, pw });
+    if (!res.ok) { errEl.textContent = res.error || '로그인 실패'; return; }
+    session = { id, pw, name: res.name, cls: res.cls };
+    applications = res.applications.map(a => {
+      const obj = blankApp();
+      FIELD_LABELS.forEach(([k]) => obj[k] = a[k] ?? '');
+      return obj;
+    });
+    sessionStorage.setItem('susi_session', JSON.stringify(session));
+    showMain();
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.';
+  }
+});
+
+document.getElementById('addCardBtn').addEventListener('click', () => {
+  if (applications.length >= MAX_APPLICATIONS) {
+    toast(`수시는 최대 ${MAX_APPLICATIONS}곳까지만 지원할 수 있습니다.`);
+    return;
+  }
+  applications.push(blankApp());
+  renderCards();
+});
+
+document.getElementById('viewToggleBtn').addEventListener('click', () => {
+  const wrap = document.getElementById('cardsWrap');
+  const isLine = wrap.classList.toggle('view-line');
+  document.getElementById('viewToggleBtn').textContent = isLine ? '☰ 여러 줄로 보기' : '↕ 한 줄로 보기';
+  sessionStorage.setItem('susi_view_line', isLine ? '1' : '0');
+});
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const errEl = document.getElementById('saveError');
+  errEl.textContent = '';
+  try {
+    const res = await apiPost({ action: 'saveApplications', id: session.id, pw: session.pw, applications });
+    if (!res.ok) { errEl.textContent = res.error || '저장 실패'; return; }
+    toast('✓ 저장되었습니다');
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  session = null;
+  sessionStorage.removeItem('susi_session');
+  showLogin();
+});
+
+document.getElementById('pwBtn').addEventListener('click', () => {
+  document.getElementById('pwForm').reset();
+  document.getElementById('pwError').textContent = '';
+  document.getElementById('pwModalBackdrop').style.display = 'flex';
+});
+document.getElementById('pwCancelBtn').addEventListener('click', () => {
+  document.getElementById('pwModalBackdrop').style.display = 'none';
+});
+document.getElementById('pwForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const oldPw = document.getElementById('oldPw').value;
+  const newPw1 = document.getElementById('newPw1').value;
+  const newPw2 = document.getElementById('newPw2').value;
+  const errEl = document.getElementById('pwError');
+  if (newPw1 !== newPw2) { errEl.textContent = '새 비밀번호가 서로 다릅니다'; return; }
+  try {
+    const res = await apiPost({ action: 'changePassword', id: session.id, oldPw, newPw: newPw1 });
+    if (!res.ok) { errEl.textContent = res.error || '변경 실패'; return; }
+    session.pw = newPw1;
+    sessionStorage.setItem('susi_session', JSON.stringify(session));
+    document.getElementById('pwModalBackdrop').style.display = 'none';
+    toast('✓ 비밀번호가 변경되었습니다');
+  } catch (err) {
+    errEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+
+// 새로고침 시 세션 복원 (비밀번호가 맞는지는 저장 시점에 서버가 다시 검증함)
+(function init() {
+  const saved = sessionStorage.getItem('susi_session');
+  if (saved) {
+    session = JSON.parse(saved);
+    apiPost({ action: 'login', id: session.id, pw: session.pw }).then(res => {
+      if (res.ok) {
+        applications = res.applications.map(a => {
+          const obj = blankApp();
+          FIELD_LABELS.forEach(([k]) => obj[k] = a[k] ?? '');
+          return obj;
+        });
+        showMain();
+      } else {
+        sessionStorage.removeItem('susi_session');
+        showLogin();
+      }
+    }).catch(() => showLogin());
+  }
+})();
+</script>
+</body>
+</html>
